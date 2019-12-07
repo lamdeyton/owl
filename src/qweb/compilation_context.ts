@@ -10,35 +10,26 @@ export class CompilationContext {
   code: string[] = [];
   variables: { [key: string]: QWebVar } = {};
   escaping: boolean = false;
-  parentNode: number | null = null;
+  parentNode: number | null | string = null;
   parentTextNode: number | null = null;
   rootNode: number | null = null;
   indentLevel: number = 0;
   rootContext: CompilationContext;
-  caller: Element | undefined;
-  shouldDefineOwner: boolean = false;
   shouldDefineParent: boolean = false;
   shouldDefineQWeb: boolean = false;
   shouldDefineUtils: boolean = false;
   shouldDefineRefs: boolean = false;
   shouldDefineResult: boolean = true;
-  shouldProtectContext: boolean = false;
-  shouldTrackScope: boolean = false;
   loopNumber: number = 0;
   inPreTag: boolean = false;
   templateName: string;
   allowMultipleRoots: boolean = false;
   hasParentWidget: boolean = false;
-  scopeVars: any[] = [];
   currentKey: string = "";
-  templates: { [key: string]: boolean } = {};
-  callingLevel: number = 0;
-  inliningLevel: number = 0;
 
   constructor(name?: string) {
     this.rootContext = this;
     this.templateName = name || "noname";
-    this.templates[this.templateName] = true;
     this.addLine("var h = this.h;");
   }
 
@@ -71,29 +62,13 @@ export class CompilationContext {
   }
 
   generateCode(): string[] {
-    const shouldTrackScope = this.shouldTrackScope && this.scopeVars.length;
-    if (shouldTrackScope) {
-      // add some vars to scope if needed
-      for (let scopeVar of this.scopeVars.reverse()) {
-        let { index, key, indent } = scopeVar;
-        const prefix = new Array(indent + 2).join("    ");
-        this.code.splice(index + 1, 0, prefix + `scope.${key} = context.${key};`);
-      }
-      this.code.unshift("    const scope = Object.create(null);");
-    }
-    if (this.shouldProtectContext) {
-      this.code.unshift("    context = Object.create(context);");
-    }
     if (this.shouldDefineResult) {
       this.code.unshift("    let result;");
     }
+
+    this.code.unshift("    let scope = Object.create(context);");
     if (this.shouldDefineRefs) {
       this.code.unshift("    context.__owl__.refs = context.__owl__.refs || {};");
-    }
-    if (this.shouldDefineOwner) {
-      // this is necessary to prevent some directives (t-forach for ex) to
-      // pollute the rendering context by adding some keys in it.
-      this.code.unshift("    let owner = context;");
     }
     if (this.shouldDefineParent) {
       if (this.hasParentWidget) {
@@ -131,10 +106,6 @@ export class CompilationContext {
   subContext(key: keyof CompilationContext, value: any): CompilationContext {
     const newContext = Object.create(this);
     newContext[key] = value;
-    if (key === "caller") {
-      newContext.callingLevel++;
-      newContext.inliningLevel++;
-    }
     return newContext;
   }
 
@@ -152,11 +123,6 @@ export class CompilationContext {
     return this.code.length - 1;
   }
 
-  addToScope(key: string, expr: string) {
-    const index = this.addLine(`context.${key} = ${expr};`);
-    this.rootContext.scopeVars.push({ index, key, indent: this.indentLevel });
-  }
-
   addIf(condition: string) {
     this.addLine(`if (${condition}) {`);
     this.indent();
@@ -171,27 +137,6 @@ export class CompilationContext {
   closeIf() {
     this.dedent();
     this.addLine("}");
-  }
-  /**
-   * Recursively (inverse) fetches the `caller` of a context
-   * Useful to determine to which t-call a t-raw="0" refers
-   */
-  getCaller(targetLevel?: number): Element | null {
-    if (targetLevel === undefined) {
-      targetLevel = this.inliningLevel;
-    }
-    if (targetLevel === this.callingLevel) {
-      return this.caller || null;
-    }
-    const proto = (this as any).__proto__;
-    return proto ? proto.getCaller(targetLevel) : null;
-  }
-  /**
-   * Marks the context with the current recursive level
-   * in which we are for inlining archs (t-raw="0")
-   */
-  getInliningContext(): CompilationContext {
-    return this.subContext("inliningLevel", this.inliningLevel - 1);
   }
 
   getValue(val: any): QWebVar | string {

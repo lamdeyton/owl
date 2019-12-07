@@ -598,10 +598,19 @@ describe("attributes", () => {
 
 describe("t-call (template calling", () => {
   test("basic caller", () => {
+    qweb.addTemplate("_basic-callee", "<span>ok</span>");
+    qweb.addTemplate("caller", '<div><t t-call="_basic-callee"/></div>');
+    const expected = "<div><span>ok</span></div>";
+    expect(renderToString(qweb, "caller")).toBe(expected);
+    expect(qweb.subTemplates["_basic-callee"].toString()).toMatchSnapshot();
+  });
+
+  test("basic caller, no parent node", () => {
     qweb.addTemplate("_basic-callee", "<div>ok</div>");
     qweb.addTemplate("caller", '<t t-call="_basic-callee"/>');
     const expected = "<div>ok</div>";
     expect(renderToString(qweb, "caller")).toBe(expected);
+    expect(qweb.subTemplates["_basic-callee"].toString()).toMatchSnapshot();
   });
 
   test("t-call with t-if", () => {
@@ -609,6 +618,7 @@ describe("t-call (template calling", () => {
     qweb.addTemplate("caller", '<div><t t-if="flag" t-call="sub"/></div>');
     const expected = "<div><span>ok</span></div>";
     expect(renderToString(qweb, "caller", { flag: true })).toBe(expected);
+    expect(qweb.subTemplates["sub"].toString()).toMatchSnapshot();
   });
 
   test("t-call not allowed on a non t node", () => {
@@ -693,6 +703,7 @@ describe("t-call (template calling", () => {
     `);
     const expected = "<div><div><span>hey</span> <span>yay</span></div></div>";
     expect(renderToString(qweb, "main")).toBe(expected);
+    expect(qweb.subTemplates["SubTemplate"].toString()).toMatchSnapshot();
   });
 
   test("cascading t-call t-raw='0'", () => {
@@ -742,7 +753,7 @@ describe("t-call (template calling", () => {
     `);
     const expected = "<div><span>hey</span></div>";
     expect(renderToString(qweb, "recursive")).toBe(expected);
-    const recursiveFn = Object.values(qweb.recursiveFns)[0] as any;
+    const recursiveFn = Object.values(qweb.subTemplates)[0] as any;
     expect(recursiveFn.toString()).toMatchSnapshot();
   });
 
@@ -770,7 +781,7 @@ describe("t-call (template calling", () => {
     expect(renderToString(qweb, "Parent", { root }, { fiber: { vars: {}, scope: {} } })).toBe(
       expected
     );
-    const recursiveFn = Object.values(qweb.recursiveFns)[0] as any;
+    const recursiveFn = Object.values(qweb.subTemplates)[0] as any;
     expect(recursiveFn.toString()).toMatchSnapshot();
   });
 
@@ -797,7 +808,7 @@ describe("t-call (template calling", () => {
     const expected =
       "<div><div><p>a</p><div><p>b</p><div><p>d</p></div></div><div><p>c</p></div></div></div>";
     expect(renderToString(qweb, "Parent", { root }, { fiber: {} })).toBe(expected);
-    const recursiveFn = Object.values(qweb.recursiveFns)[0] as any;
+    const recursiveFn = Object.values(qweb.subTemplates)[0] as any;
     expect(recursiveFn.toString()).toMatchSnapshot();
   });
 
@@ -806,6 +817,51 @@ describe("t-call (template calling", () => {
     qweb.addTemplate("john", `<span>desk</span>`);
     const expected = "<div><span>desk</span></div>";
     expect(trim(renderToString(qweb, "abcd"))).toBe(expected);
+  });
+
+  test("t-call with t-set inside and outside", () => {
+    qweb.addTemplates(`
+      <templates>
+        <div t-name="main">
+          <t t-foreach="list" t-as="v">
+            <t t-set="val" t-value="v.val"/>
+            <t t-call="sub">
+              <t t-set="val3" t-value="val*3"/>
+            </t>
+          </t>
+        </div>
+        <t t-name="sub">
+          <span t-esc="val3"/>
+        </t>
+      </templates>
+    `);
+    const expected = "<div><span>3</span><span>6</span><span>9</span></div>";
+    const context = { list: [{ val: 1 }, { val: 2 }, { val: 3 }] };
+    expect(trim(renderToString(qweb, "main", context))).toBe(expected);
+  });
+
+  test("t-call with t-set inside and outside. 2", () => {
+    qweb.addTemplates(`
+      <templates>
+        <div t-name="main">
+          <t t-foreach="list" t-as="v">
+            <t t-set="val" t-value="v.val"/>
+            <t t-call="sub">
+              <t t-set="val3" t-value="val*3"/>
+            </t>
+          </t>
+        </div>
+        <t t-name="sub">
+          <span t-esc="val3"/>
+          <t t-esc="w"/>
+        </t>
+        <p t-name="wrapper"><t t-set="w" t-value="'fromwrapper'"/><t t-call="main"/></p>
+      </templates>
+    `);
+    const expected =
+      "<p><div><span>3</span>fromwrapper<span>6</span>fromwrapper<span>9</span>fromwrapper</div></p>";
+    const context = { list: [{ val: 1 }, { val: 2 }, { val: 3 }] };
+    expect(trim(renderToString(qweb, "wrapper", context))).toBe(expected);
   });
 });
 
