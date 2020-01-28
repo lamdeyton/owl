@@ -26,49 +26,67 @@ export const MODS_CODE = {
   stop: "e.stopPropagation();"
 };
 
+interface HandlerInfo {
+  event: string;
+  handler: string;
+}
+
+const FNAMEREGEXP = /^[$A-Z_][0-9A-Z_$]*$/i;
+
+export function makeHandlerCode(
+  ctx,
+  fullName,
+  value,
+  putInCache: boolean,
+  modcodes = MODS_CODE
+): HandlerInfo {
+  const [event, ...mods] = fullName.slice(5).split(".");
+  if (!event) {
+    throw new Error("Missing event name with t-on directive");
+  }
+  let code: string;
+  // check if it is a method with no args, a method with args or an expression
+  let args: string = "";
+  const name: string = value.replace(/\(.*\)/, function(_args) {
+    args = _args.slice(1, -1);
+    return "";
+  });
+  const isMethodCall = name.match(FNAMEREGEXP);
+
+  // then generate code
+  if (isMethodCall) {
+    ctx.rootContext.shouldDefineUtils = true;
+    const comp = `utils.getComponent(context)`;
+    if (args) {
+      const argId = ctx.generateID();
+      ctx.addLine(`let args${argId} = [${ctx.formatExpression(args)}];`);
+      code = `${comp}['${name}'](...args${argId}, e);`;
+      putInCache = false;
+    } else {
+      code = `${comp}['${name}'](e);`;
+    }
+  } else {
+    // if we get here, then it is an expression
+    // we need to capture every variable in it
+    putInCache = false;
+    code = ctx.captureExpression(value);
+  }
+  const modCode = mods.map(mod => modcodes[mod]).join("");
+  let handler = `function (e) {if (!context.__owl__.isMounted){return}${modCode}${code}}`;
+  if (putInCache) {
+    const key = ctx.generateTemplateKey(event);
+    ctx.addLine(`extra.handlers[${key}] = extra.handlers[${key}] || ${handler};`);
+    handler = `extra.handlers[${key}]`;
+  }
+  return { event, handler };
+}
+
 QWeb.addDirective({
   name: "on",
   priority: 90,
   atNodeCreation({ ctx, fullName, value, nodeID }) {
-    ctx.rootContext.shouldDefineOwner = true;
-    const [eventName, ...mods] = fullName.slice(5).split(".");
-    if (!eventName) {
-      throw new Error("Missing event name with t-on directive");
-    }
-    let extraArgs;
-    let handlerName = value.replace(/\(.*\)/, function(args) {
-      extraArgs = args.slice(1, -1);
-      return "";
-    });
-    let params = extraArgs ? `owner, ${ctx.formatExpression(extraArgs)}` : "owner";
-    let handler = `function (e) {if (!context.__owl__.isMounted){return}`;
-    handler += mods
-      .map(function(mod) {
-        return MODS_CODE[mod];
-      })
-      .join("");
-    if (handlerName) {
-      if (!extraArgs) {
-        handler += `const fn = context['${handlerName}'];`;
-        handler += `if (fn) { fn.call(${params}, e); } else { context.${handlerName}; }`;
-        handler += `}`;
-        ctx.addLine(
-          `extra.handlers['${eventName}' + ${nodeID}] = extra.handlers['${eventName}' + ${nodeID}] || ${handler};`
-        );
-        ctx.addLine(`p${nodeID}.on['${eventName}'] = extra.handlers['${eventName}' + ${nodeID}];`);
-      } else {
-        const handlerKey = `handler${ctx.generateID()}`;
-        ctx.addLine(
-          `const ${handlerKey} = context['${handlerName}'] && context['${handlerName}'].bind(${params});`
-        );
-        handler += `if (${handlerKey}) { ${handlerKey}(e); } else { context.${value}; }`;
-        handler += `}`;
-        ctx.addLine(`p${nodeID}.on['${eventName}'] = ${handler};`);
-      }
-    } else {
-      handler += "}";
-      ctx.addLine(`p${nodeID}.on['${eventName}'] = ${handler};`);
-    }
+    const { event, handler } = makeHandlerCode(ctx, fullName, value, true);
+    ctx.addLine(`p${nodeID}.on['${event}'] = ${handler};`);
   }
 });
 
@@ -195,9 +213,8 @@ QWeb.addDirective({
 QWeb.addDirective({
   name: "slot",
   priority: 80,
-  atNodeEncounter({ ctx, value }): boolean {
+  atNodeEncounter({ ctx, value, node, qweb }): boolean {
     const slotKey = ctx.generateID();
-    ctx.rootContext.shouldDefineOwner = true;
     ctx.addLine(
       `const slot${slotKey} = this.constructor.slots[context.__owl__.slotId + '_' + '${value}'];`
     );
@@ -210,14 +227,17 @@ QWeb.addDirective({
       ctx.addLine(`let ${parentNode}= []`);
       ctx.addLine(`result = {}`);
     }
-    // if we are in a slot of a component, we need to get the vars from the
-    // parent fiber instead.
-    const vars = ctx.allowMultipleRoots ? "extra.fiber.parent.vars" : "extra.fiber.vars";
     ctx.addLine(
-      `slot${slotKey}.call(this, context.__owl__.parent, Object.assign({}, extra, {parentNode: ${parentNode}, parent: extra.parent || owner, vars: ${vars}}));`
+      `slot${slotKey}.call(this, context.__owl__.scope, Object.assign({}, extra, {parentNode: ${parentNode}, parent: extra.parent || context}));`
     );
     if (!ctx.parentNode) {
       ctx.addLine(`utils.defineProxy(result, ${parentNode}[0]);`);
+    }
+    if (node.hasChildNodes()) {
+      ctx.addElse();
+      const nodeCopy = <Element>node.cloneNode(true);
+      nodeCopy.removeAttribute("t-slot");
+      qweb._compileNode(nodeCopy, ctx);
     }
     ctx.closeIf();
     return true;
@@ -284,9 +304,20 @@ QWeb.addDirective({
 QWeb.addDirective({
   name: "key",
   priority: 45,
-  atNodeEncounter({ ctx, value }) {
-    let id = ctx.generateID();
-    ctx.addLine(`const nodeKey${id} = ${ctx.formatExpression(value)};`);
-    ctx.currentKey = `nodeKey${id}`;
+  atNodeEncounter({ ctx, value, node }) {
+    if (ctx.loopNumber === 0) {
+      ctx.keyStack.push(ctx.rootContext.hasKey0);
+      ctx.rootContext.hasKey0 = true;
+    }
+    ctx.addLine("{");
+    ctx.indent();
+    ctx.addLine(`let key${ctx.loopNumber} = ${ctx.formatExpression(value)};`);
+  },
+  finalize({ ctx }) {
+    ctx.dedent();
+    ctx.addLine("}");
+    if (ctx.loopNumber === 0) {
+      ctx.rootContext.hasKey0 = ctx.keyStack.pop() as boolean;
+    }
   }
 });

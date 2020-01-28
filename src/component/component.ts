@@ -6,6 +6,7 @@ import "./directive";
 import { Fiber } from "./fiber";
 import "./props_validation";
 import { Scheduler, scheduler } from "./scheduler";
+import { activateSheet } from "./styles";
 
 /**
  * Owl Component System
@@ -70,10 +71,9 @@ interface Internal<T extends Env, Props> {
   parentLastFiberId: number;
 
   // when a rendering is initiated by a parent, it may set variables in 'scope'
-  // and 'vars' (typically when the component is rendered in a slot). We need to
+  // (typically when the component is rendered in a slot). We need to
   // store that information in case the component would be re-rendered later on.
   scope: any;
-  vars: any;
 
   boundHandlers: { [key: number]: any };
   observer: Observer | null;
@@ -198,9 +198,11 @@ export class Component<T extends Env, Props extends {}> {
       renderFn: qweb.render.bind(qweb, template),
       classObj: null,
       refs: null,
-      scope: null,
-      vars: null
+      scope: null
     };
+    if (constr.style) {
+      this.__applyStyles(constr);
+    }
   }
 
   /**
@@ -300,7 +302,14 @@ export class Component<T extends Env, Props extends {}> {
     const position = options.position || "last-child";
     const __owl__ = this.__owl__;
     if (__owl__.isMounted) {
-      return Promise.resolve();
+      if (position !== "self" && this.el!.parentNode !== target) {
+        // in this situation, we are trying to mount a component on a different
+        // target. In this case, we need to unmount first, otherwise it will
+        // not work.
+        this.unmount();
+      } else {
+        return Promise.resolve();
+      }
     }
     if (!(target instanceof HTMLElement || target instanceof DocumentFragment)) {
       let message = `Component '${this.constructor.name}' cannot be mounted: the target is not a valid DOM node.`;
@@ -510,9 +519,8 @@ export class Component<T extends Env, Props extends {}> {
    * The __updateProps method is called by the t-component directive whenever
    * it updates a component (so, when the parent template is rerendered).
    */
-  async __updateProps(nextProps: Props, parentFiber: Fiber, scope: any, vars: any): Promise<void> {
+  async __updateProps(nextProps: Props, parentFiber: Fiber, scope: any): Promise<void> {
     this.__owl__.scope = scope;
-    this.__owl__.vars = vars;
     const shouldUpdate = parentFiber.force || this.shouldUpdate(nextProps);
     if (shouldUpdate) {
       const __owl__ = this.__owl__;
@@ -566,12 +574,11 @@ export class Component<T extends Env, Props extends {}> {
 
   /**
    * The __prepare method is only called by the t-component directive, when a
-   * subcomponent is created. It gets its scope and vars, if any, from the
+   * subcomponent is created. It gets its scope, if any, from the
    * parent template.
    */
-  __prepare(parentFiber: Fiber, scope: any, vars: any, cb: CallableFunction): Fiber {
+  __prepare(parentFiber: Fiber, scope: any, cb: CallableFunction): Fiber {
     this.__owl__.scope = scope;
-    this.__owl__.vars = vars;
     const fiber = new Fiber(parentFiber, this, parentFiber.force, null);
     fiber.shouldPatch = false;
     if (!parentFiber.child) {
@@ -584,6 +591,20 @@ export class Component<T extends Env, Props extends {}> {
     return fiber;
   }
 
+  /**
+   * Apply the stylesheets defined by the component. Note that we need to make
+   * sure all inherited stylesheets are applied as well.  We then delete the
+   * `style` key from the constructor to make sure we do not apply it again.
+   */
+  private __applyStyles(constr) {
+    while (constr && constr.style) {
+      if (constr.hasOwnProperty("style")) {
+        activateSheet(constr.style, constr.name);
+        delete constr.style;
+      }
+      constr = constr.__proto__;
+    }
+  }
   __getTemplate(qweb: QWeb): string {
     let p = (<any>this).constructor;
     if (!p.hasOwnProperty("_template")) {

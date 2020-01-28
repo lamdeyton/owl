@@ -225,6 +225,10 @@ to be called in the constructor.
   }
   ```
 
+- **`style`** (string, optional): it should be the return value of the [`css` tag](tags.md#css-tag),
+  which is used to inject stylesheet whenever the component is visible on the
+  screen.
+
 There is another static property defined on the `Component` class: `current`.
 This property is set to the currently being defined component (in the constructor).
 This is the way [hooks](hooks.md) are able to get a reference to the target
@@ -421,7 +425,7 @@ likely via a change in its state/props or environment).
 
 This method is not called on the initial render. It is useful to interact
 with the DOM (for example, through an external library) whenever the
-component was patched. Note that this hook will not be called if the compoent is
+component was patched. Note that this hook will not be called if the component is
 not in the DOM.
 
 Updating the component state in this hook is possible, but not encouraged.
@@ -628,8 +632,18 @@ as it will be translated to:
 
 ```js
 button.addEventListener("click", () => {
-  component.state.counter++;
+  context.state.counter++;
 });
+```
+
+Warning: inline expressions are evaluated in the context of the template. This
+means that they can access the component methods and properties. But if they set
+a key, the inline statement will actually not modify the component, but a key in
+a sub scope.
+
+```xml
+<button t-on-click="value = 1">Set value to 1 (does not work!!!)</button>
+<button t-on-click="state.value = 1">Set state.value to 1 (work as expected)</button>
 ```
 
 In order to remove the DOM event details from the event handlers (like calls to
@@ -865,6 +879,19 @@ be considered the `default` slot. For example:
 </div>
 ```
 
+Slots can define a default content, in case the parent did not define them:
+
+```xml
+<div t-name="Parent">
+  <Child/>
+</div>
+
+<span t-name="Child">
+  <t t-slot="default">default content</t>
+</span>
+<!-- will be rendered as: <div><span>default content</span></div> -->
+```
+
 ### Dynamic sub components
 
 It is not common, but sometimes we need a dynamic component name. In this case,
@@ -933,7 +960,7 @@ For example, here is how we could implement an `ErrorBoundary` component:
     <t t-if="state.error">
         Error handled
     </t>
-    <t t-else="1">
+    <t t-else="">
         <t t-slot="default" />
     </t>
 </div>

@@ -1,8 +1,13 @@
 {
-  "name": "owl-framework",
-  "version": "1.0.0-beta1",
+  "name": "@odoo/owl",
+  "version": "1.0.4",
   "description": "Odoo Web Library (OWL)",
-  "main": "src/index.ts",
+  "main": "dist/owl.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist/types/",
+    "dist/owl.js"
+  ],
   "engines": {
     "node": ">=10.15.3"
   },
@@ -18,7 +23,9 @@
     "tools": "npm run build && npm run tools:serve",
     "pretools:watch": "npm run build",
     "tools:watch": "npm-run-all  --parallel tools:serve \"build:* -- --watch\"",
-    "prettier": "prettier {src/*.ts,src/**/*.ts,tests/*.ts,tests/**/*.ts,doc/*.md,doc/**/*.md} --write"
+    "prettier": "prettier {src/*.ts,src/**/*.ts,tests/*.ts,tests/**/*.ts,doc/*.md,doc/**/*.md} --write",
+    "publish": "npm run buildcommonjs && npm publish",
+    "release": "node tools/release.js"
   },
   "repository": {
     "type": "git",
@@ -33,8 +40,10 @@
   "dependencies": {},
   "devDependencies": {
     "@types/jest": "^23.3.12",
+    "chalk": "^3.0.0",
     "cpx": "^1.5.0",
     "git-rev-sync": "^1.12.0",
+    "github-api": "^3.3.0",
     "jest": "^23.6.0",
     "jest-environment-jsdom": "^24.7.1",
     "live-server": "^1.2.1",

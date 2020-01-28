@@ -39,9 +39,10 @@ const WORD_REPLACEMENT = {
 };
 
 export interface QWebVar {
-  id?: string;
-  expr?: string;
-  xml?: NodeList;
+  id: string; // foo
+  expr: string; // scope.foo (local variables => only foo)
+  value?: string; // 1 + 3
+  hasBody?: boolean;
 }
 
 //------------------------------------------------------------------------------
@@ -65,6 +66,7 @@ interface Token {
   value: string;
   originalValue?: string;
   size?: number;
+  varName?: string;
 }
 
 const STATIC_TOKEN_MAP: { [key: string]: TKind } = {
@@ -80,7 +82,7 @@ const STATIC_TOKEN_MAP: { [key: string]: TKind } = {
 
 // note that the space after typeof is relevant. It makes sure that the formatted
 // expression has a space after typeof
-const OPERATORS = ".,===,==,+,!==,!=,!,||,&&,>=,>,<=,<,?,-,*,/,%,typeof ,=>".split(",");
+const OPERATORS = "...,.,===,==,+,!==,!=,!,||,&&,>=,>,<=,<,?,-,*,/,%,typeof ,=>,=,;,in ".split(",");
 
 type Tokenizer = (expr: string) => Token | false;
 
@@ -233,8 +235,8 @@ export function tokenize(expr: string): Token[] {
  * the arrow operator, then we add the current (or some previous tokens) token to
  * the list of variables so it does not get replaced by a lookup in the context
  */
-export function compileExpr(expr: string, vars: { [key: string]: QWebVar }): string {
-  vars = Object.create(vars);
+export function compileExprToArray(expr: string, scope: { [key: string]: QWebVar }): Token[] {
+  scope = Object.create(scope);
   const tokens = tokenize(expr);
   for (let i = 0; i < tokens.length; i++) {
     let token = tokens[i];
@@ -258,23 +260,30 @@ export function compileExpr(expr: string, vars: { [key: string]: QWebVar }): str
         while (j > 0 && tokens[j].type !== "LEFT_PAREN") {
           if (tokens[j].type === "SYMBOL" && tokens[j].originalValue) {
             tokens[j].value = tokens[j].originalValue!;
-            vars[tokens[j].value] = { id: tokens[j].value };
+            scope[tokens[j].value] = { id: tokens[j].value, expr: tokens[j].value };
           }
           j--;
         }
       } else {
-        vars[token.value] = { id: token.value };
+        scope[token.value] = { id: token.value, expr: token.value };
       }
     }
 
     if (isVar) {
-      if (token.value in vars && "id" in vars[token.value]) {
-        token.value = vars[token.value].id!;
+      token.varName = token.value;
+      if (token.value in scope && "id" in scope[token.value]) {
+        token.value = scope[token.value].expr!;
       } else {
         token.originalValue = token.value;
-        token.value = `context['${token.value}']`;
+        token.value = `scope['${token.value}']`;
       }
     }
   }
-  return tokens.map(t => t.value).join("");
+  return tokens;
+}
+
+export function compileExpr(expr: string, scope: { [key: string]: QWebVar }): string {
+  return compileExprToArray(expr, scope)
+    .map(t => t.value)
+    .join("");
 }

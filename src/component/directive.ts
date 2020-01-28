@@ -1,6 +1,6 @@
 import { QWeb } from "../qweb/index";
 import { INTERP_REGEXP } from "../qweb/compilation_context";
-import { MODS_CODE } from "../qweb/extensions";
+import { makeHandlerCode, MODS_CODE } from "../qweb/extensions";
 
 //------------------------------------------------------------------------------
 // t-component
@@ -189,15 +189,15 @@ QWeb.addDirective({
   extraNames: ["props"],
   priority: 100,
   atNodeEncounter({ ctx, value, node, qweb }): boolean {
-    ctx.addLine("//COMPONENT");
-    ctx.rootContext.shouldDefineOwner = true;
+    ctx.addLine(`// Component '${value}'`);
     ctx.rootContext.shouldDefineQWeb = true;
     ctx.rootContext.shouldDefineParent = true;
     ctx.rootContext.shouldDefineUtils = true;
+    ctx.rootContext.shouldDefineScope = true;
     let hasDynamicProps = node.getAttribute("t-props") ? true : false;
 
     // t-on- events and t-transition
-    const events: [string, string[], string, string][] = [];
+    const events: [string, string][] = [];
     let transition: string = "";
     const attributes = (<Element>node).attributes;
     const props: { [key: string]: string } = {};
@@ -205,19 +205,13 @@ QWeb.addDirective({
       const name = attributes[i].name;
       const value = attributes[i].textContent!;
       if (name.startsWith("t-on-")) {
-        const [eventName, ...mods] = name.slice(5).split(".");
-        let extraArgs;
-        let handlerValue = value.replace(/\(.*\)/, function(args) {
-          extraArgs = args.slice(1, -1);
-          return "";
-        });
-        events.push([eventName, mods, handlerValue, extraArgs]);
+        events.push([name, value]);
       } else if (name === "t-transition") {
         transition = value;
       } else if (!name.startsWith("t-")) {
         if (name !== "class" && name !== "style") {
           // this is a prop!
-          props[name] = ctx.formatExpression(value);
+          props[name] = ctx.formatExpression(value) || "undefined";
         }
       }
     }
@@ -284,32 +278,15 @@ QWeb.addDirective({
         }
       }
       let eventsCode = events
-        .map(function([eventName, mods, handlerValue, extraArgs]) {
-          let params = "owner";
-          if (extraArgs) {
-            if (ctx.loopNumber) {
-              let argId = ctx.generateID();
-              // we need to evaluate the arguments now, because the handler will
-              // be set asynchronously later when the widget is ready, and the
-              // context might be different.
-              ctx.addLine(`let arg${argId} = ${ctx.formatExpression(extraArgs)};`);
-              params = `owner, arg${argId}`;
-            } else {
-              params = `owner, ${ctx.formatExpression(extraArgs)}`;
-            }
-          }
-          let handler = `function (e) {if(!owner.__owl__.isMounted){return}`;
-          handler += mods
-            .map(function(mod) {
-              return T_COMPONENT_MODS_CODE[mod];
-            })
-            .join("");
-          if (handlerValue) {
-            handler += `const fn = owner['${handlerValue}'];`;
-            handler += `if (fn) { fn.call(${params}, e); } else { owner.${handlerValue}; }`;
-          }
-          handler += `}`;
-          return `vn.elm.addEventListener('${eventName}', ${handler});`;
+        .map(function([name, value]) {
+          const { event, handler } = makeHandlerCode(
+            ctx,
+            name,
+            value,
+            false,
+            T_COMPONENT_MODS_CODE
+          );
+          return `vn.elm.addEventListener('${event}', ${handler});`;
         })
         .join("");
       const styleExpr = tattStyle || (styleAttr ? `'${styleAttr}'` : false);
@@ -348,25 +325,9 @@ QWeb.addDirective({
     }
 
     // SLOTS
-    const varDefs: string[] = [];
     const hasSlots = node.childNodes.length;
-    if (hasSlots) {
-      ctx.rootContext.shouldTrackScope = true;
-      for (let v of Object.values(ctx.variables)) {
-        if (v["id"]) {
-          varDefs.push(v["id"]);
-        }
-      }
-    }
 
-    let scopeVars;
-    if (hasSlots) {
-      let scope = ctx.scopeVars.length ? `Object.assign({}, scope)` : `{}`;
-      let vars = varDefs.length ? `{${varDefs.join(",")}}` : "undefined";
-      scopeVars = `${scope}, ${vars}`;
-    } else {
-      scopeVars = "undefined, undefined";
-    }
+    let scope = hasSlots ? `Object.assign(Object.create(context), scope)` : "undefined";
 
     ctx.addIf(`w${componentID}`);
 
@@ -376,8 +337,7 @@ QWeb.addDirective({
       styleCode = `.then(()=>{if (w${componentID}.__owl__.isDestroyed) {return};w${componentID}.el.style=${tattStyle};});`;
     }
     ctx.addLine(
-      `w${componentID}.__updateProps(props${componentID}, extra.fiber${scopeVars &&
-        ", " + scopeVars})${styleCode};`
+      `w${componentID}.__updateProps(props${componentID}, extra.fiber, ${scope})${styleCode};`
     );
     ctx.addLine(`let pvnode = w${componentID}.__owl__.pvnode;`);
     if (registerCode) {
@@ -439,7 +399,7 @@ QWeb.addDirective({
     }
 
     ctx.addLine(
-      `let fiber = w${componentID}.__prepare(extra.fiber, ${scopeVars}, () => { const vnode = fiber.vnode; pvnode.sel = vnode.sel; ${createHook}});`
+      `let fiber = w${componentID}.__prepare(extra.fiber, ${scope}, () => { const vnode = fiber.vnode; pvnode.sel = vnode.sel; ${createHook}});`
     );
     // hack: specify empty remove hook to prevent the node from being removed from the DOM
     const insertHook = refExpr ? `insert(vn) {${refExpr}},` : "";

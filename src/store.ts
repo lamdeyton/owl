@@ -132,7 +132,7 @@ export function useStore(selector, options: SelectorOptions = {}): any {
     __destroy.call(component, parent);
   };
 
-  if (typeof result !== "object") {
+  if (typeof result !== "object" || result === null) {
     return result;
   }
   return new Proxy(result, {
@@ -141,6 +141,9 @@ export function useStore(selector, options: SelectorOptions = {}): any {
     },
     set(target, k, v) {
       throw new Error("Store state should only be modified through actions");
+    },
+    has(target, k) {
+      return k in result;
     }
   });
 }

@@ -1,4 +1,4 @@
-import { Env } from "../src/component/component";
+import { Env, Component } from "../src/component/component";
 import { scheduler } from "../src/component/scheduler";
 import { EvalContext, QWeb } from "../src/qweb/qweb";
 import { CompilationContext } from "../src/qweb/compilation_context";
@@ -25,6 +25,7 @@ beforeEach(() => {
   slots = Object.assign({}, QWeb.slots);
   nextId = QWeb.nextId;
   TEMPLATES = Object.assign({}, QWeb.TEMPLATES);
+  Component.scheduler.tasks = [];
 });
 
 afterEach(() => {
@@ -32,6 +33,7 @@ afterEach(() => {
   QWeb.slots = slots;
   QWeb.nextId = nextId;
   QWeb.TEMPLATES = TEMPLATES;
+  Component.scheduler.tasks = [];
 });
 
 // helpers
@@ -121,11 +123,8 @@ export function renderToString(
   context: EvalContext = {},
   extra?: any
 ): string {
-  const node = renderToDOM(qweb, t, context, extra);
-  const result = node instanceof Text ? node.textContent! : node.outerHTML;
-  if (result !== qweb.renderToString(t, context, extra)) {
-    throw new Error("HTML string returned by renderToString helper does not match QWeb render");
-  }
+  const result = qweb.renderToString(t, context, extra);
+  expect(qweb.templates[t].fn.toString()).toMatchSnapshot();
   return result;
 }
 
